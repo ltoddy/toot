@@ -1,15 +1,21 @@
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
-mod request;
+pub use self::request::{read_http_request, RawRequest, RequestLine};
 
-#[derive(Debug)]
+mod request;
+#[cfg(test)]
+mod tests;
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ParseRequestError {
-    Io(io::Error),
+    Io(io::ErrorKind),
     UnknownMethod(String),
     UnknownHttpVersion(String),
     RequestLine(String),
+    InvalidHeader(String),
 }
 
 impl Display for ParseRequestError {
@@ -19,22 +25,16 @@ impl Display for ParseRequestError {
             ParseRequestError::UnknownMethod(m) => write!(f, "unknown http method: {m}"),
             ParseRequestError::UnknownHttpVersion(v) => write!(f, "unknown http version: {v}"),
             ParseRequestError::RequestLine(src) => write!(f, "invalid request line: {src}"),
-        }
-    }
-}
-
-impl std::error::Error for ParseRequestError {
-    fn cause(&self) -> Option<&dyn std::error::Error> {
-        match self {
-            ParseRequestError::Io(err) => Some(err),
-            _ => None,
+            ParseRequestError::InvalidHeader(src) => {
+                write!(f, "invalid characters in header content: {src}")
+            }
         }
     }
 }
 
 impl From<io::Error> for ParseRequestError {
     fn from(value: io::Error) -> Self {
-        ParseRequestError::Io(value)
+        ParseRequestError::Io(value.kind())
     }
 }
 
@@ -125,12 +125,83 @@ impl HttpVersion {
             HttpVersion::Http1_1 => "HTTP/1.1",
         }
     }
+}
 
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            HttpVersion::Http0_9 => b"HTTP/0.9",
-            HttpVersion::Http1_0 => b"HTTP/1.0",
-            HttpVersion::Http1_1 => b"HTTP/1.1",
+#[derive(Debug)]
+pub struct Headers(Vec<Header>);
+
+impl Headers {
+    pub fn empty() -> Self {
+        let inner = Vec::with_capacity(8);
+        Self(inner)
+    }
+
+    // TODO
+    pub fn get(&self, field: &str) -> Option<&str> {
+        self.iter().find(|h| h.field.eq_ignore_ascii_case(field)).map(|h| h.value.as_ref())
+    }
+}
+
+impl Deref for Headers {
+    type Target = Vec<Header>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Headers {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Display for Headers {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for Header { field, value } in self.iter() {
+            writeln!(f, "{}: {}", field.as_str(), value.as_str())?;
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct Header {
+    field: String,
+    value: String,
+}
+
+impl Header {
+    pub fn new(field: String, value: String) -> Self {
+        Self { field, value }
+    }
+
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+impl FromStr for Header {
+    type Err = ParseRequestError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.split(": ");
+
+        let field = parts
+            .next()
+            .map(|w| w.to_owned())
+            .ok_or(ParseRequestError::InvalidHeader(s.to_owned()))?;
+        let value = parts
+            .next()
+            .map(|w| w.trim())
+            .map(|w| w.to_owned())
+            .ok_or(ParseRequestError::InvalidHeader(s.to_owned()))?;
+
+        let header = Header { field, value };
+        Ok(header)
     }
 }
