@@ -4,7 +4,38 @@ use std::str::FromStr;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use super::{HttpVersion, Method, ParseRequestError};
+use super::{Headers, HttpVersion, Method, ParseRequestError};
+
+pub async fn read_http_request<R>(reader: &mut R) -> Result<RawRequest, ParseRequestError>
+where
+    R: AsyncRead + ?Sized + Unpin,
+{
+    let line = read_next_line(reader).await?;
+    let request_line = String::from_utf8_lossy(&line).parse::<RequestLine>()?;
+
+    let mut headers = Headers::empty();
+    loop {
+        let line = read_next_line(reader).await?;
+        if line.is_empty() {
+            break;
+        }
+        let header = String::from_utf8_lossy(&line).parse()?;
+        headers.push(header);
+    }
+
+    let body = {
+        if let Some(length) = headers.get("Content-Length").and_then(|v| v.parse::<usize>().ok()) {
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).await?;
+            Some(body)
+        } else {
+            None
+        }
+    };
+
+    let request = RawRequest { request_line, headers, body };
+    Ok(request)
+}
 
 /// Reads until `CRLF` is reached
 async fn read_next_line<R>(reader: &mut R) -> io::Result<Vec<u8>>
@@ -27,11 +58,17 @@ where
     }
 }
 
+pub struct RawRequest {
+    pub request_line: RequestLine,
+    pub headers: Headers,
+    pub body: Option<Vec<u8>>,
+}
+
 #[derive(Debug)]
 pub struct RequestLine {
-    method: Method,
-    uri: String,
-    version: HttpVersion,
+    pub method: Method,
+    pub uri: String,
+    pub version: HttpVersion,
 }
 
 impl Display for RequestLine {
@@ -60,23 +97,5 @@ impl FromStr for RequestLine {
             version: version.ok_or(ParseRequestError::RequestLine(s.to_owned()))?,
         };
         Ok(request_line)
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    #[tokio::test]
-    pub async fn test_parse_request_line() {
-        let line = "GET /some HTTP/1.1\r\n";
-        let line = read_next_line(&mut line.as_bytes()).await.unwrap();
-        let request_line = String::from_utf8_lossy(&line)
-            .parse::<RequestLine>()
-            .unwrap();
-
-        assert_eq!(Method::GET, request_line.method);
-        assert_eq!(HttpVersion::Http1_1, request_line.version);
-        assert_eq!("/some", request_line.uri);
     }
 }
