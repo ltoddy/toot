@@ -4,6 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
 pub use self::request::{read_http_request, RawRequest, RequestLine};
+pub use self::response::{write_http_response, RawResponse, StatusLine};
 
 mod request;
 mod response;
@@ -139,9 +140,20 @@ impl Headers {
         Self(inner)
     }
 
-    // TODO
+    pub fn set(&mut self, field: &str, value: String) {
+        if let Some(h) = self.iter_mut().find(|h| h.field.eq_ignore_ascii_case(field)) {
+            h.value = value;
+            return;
+        }
+        self.push(Header::new(field.to_owned(), value));
+    }
+
     pub fn get(&self, field: &str) -> Option<&str> {
         self.iter().find(|h| h.field.eq_ignore_ascii_case(field)).map(|h| h.value.as_ref())
+    }
+
+    pub fn to_http_message(&self) -> String {
+        self.iter().map(Header::to_http_message).collect::<Vec<_>>().concat()
     }
 }
 
@@ -175,7 +187,14 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn new(field: String, value: String) -> Self {
+    pub fn new<S1, S2>(field: S1, value: S2) -> Self
+    where
+        S1: ToString,
+        S2: ToString,
+    {
+        let field = field.to_string();
+        let value = value.to_string();
+
         Self { field, value }
     }
 
@@ -185,6 +204,10 @@ impl Header {
 
     pub fn value(&self) -> &str {
         &self.value
+    }
+
+    pub fn to_http_message(&self) -> String {
+        format!("{}: {}{CRLF}", self.field, self.value)
     }
 }
 
@@ -209,6 +232,7 @@ impl FromStr for Header {
     }
 }
 
+// TODO: user std::num::NonZeroU16
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct StatusCode(u16);
 

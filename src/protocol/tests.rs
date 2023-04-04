@@ -51,3 +51,22 @@ pub async fn test_read_http_request() {
     assert_eq!(Some("application/json"), request.headers.get("Content-Type"));
     assert_eq!(None, request.body);
 }
+
+#[test]
+pub fn test_status_line_to_http_message() {
+    let status_line = StatusLine::new(HttpVersion::Http1_1, StatusCode::OK);
+
+    let bytes = "HTTP/1.1 200 OK\r\n";
+
+    assert_eq!(bytes, status_line.to_http_message());
+}
+
+#[test]
+pub fn test_header_to_http_message() {
+    let header = Header::new("hello", "world");
+
+    let actual = header.to_http_message();
+
+    let expected = "hello: world\r\n";
+    assert_eq!(expected, actual);
+}
